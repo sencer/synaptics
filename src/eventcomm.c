@@ -41,6 +41,7 @@
 #include <stdio.h>
 #include <time.h>
 #include "synproto.h"
+#include "synaptics.h"
 #include "synapticsstr.h"
 #include <xf86.h>
 #include <libevdev/libevdev.h>
@@ -660,9 +661,12 @@ count_fingers(InputInfoPtr pInfo, const struct CommData *comm)
         fingers = 2;
     else if (comm->threeFingers)
         fingers = 3;
-
+    else if (comm->fourFingers)
+	fingers=4;
+    else if (comm->fiveFingers)
+	fingers=5;
     if (priv->has_touch && proto_data->num_touches > fingers)
-        fingers = proto_data->num_touches;
+	fingers = proto_data->num_touches;
 
     return fingers;
 }
@@ -763,6 +767,12 @@ EventReadHwState(InputInfoPtr pInfo,
             case BTN_TOOL_TRIPLETAP:
                 comm->threeFingers = v;
                 break;
+            case BTN_TOOL_QUADTAP:
+                comm->fourFingers = v;
+                break;
+            case BTN_TOOL_QUINTTAP:
+		comm->fiveFingers = v;
+		break;
             case BTN_TOUCH:
                 if (!priv->has_pressure)
                     hw->z = v ? para->finger_high + 1 : 0;

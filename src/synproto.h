@@ -95,6 +95,8 @@ struct CommData {
     Bool oneFinger;
     Bool twoFingers;
     Bool threeFingers;
+    Bool fourFingers;
+    Bool fiveFingers;
 };
 
 struct _SynapticsParameters;
