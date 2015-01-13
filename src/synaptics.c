@@ -1902,31 +1902,33 @@ SynapticsDetectFinger(SynapticsPrivate * priv, struct SynapticsHwState *hw)
 
     /* palm detection */
 
-    if ((hw->z > para->palm_min_z) && (hw->fingerWidth > para->palm_min_width))
+    if ((hw->z > para->palm_min_z)) // && (hw->fingerWidth > para->palm_min_width))
         return FS_BLOCKED;
 
     if (priv->has_mt_palm_detect)
         return finger;
 
-    if (hw->x == 0 || priv->finger_state == FS_UNTOUCHED)
-        priv->avg_width = 0;
-    else
-        priv->avg_width += (hw->fingerWidth - priv->avg_width + 1) / 2;
+    /* if (hw->x == 0 || priv->finger_state == FS_UNTOUCHED) */
+    /*     priv->avg_width = 0; */
+    /* else */
+    /*     priv->avg_width += (hw->fingerWidth - priv->avg_width + 1) / 2; */
 
     if (finger != FS_UNTOUCHED && priv->finger_state == FS_UNTOUCHED) {
-        int safe_width = MAX(hw->fingerWidth, priv->avg_width);
+        /* int safe_width = MAX(hw->fingerWidth, priv->avg_width); */
 
         if (hw->numFingers > 1 ||       /* more than one finger -> not a palm */
-            ((safe_width < 6) && (priv->prev_z < para->finger_high)) || /* thin finger, distinct touch -> not a palm */
-            ((safe_width < 7) && (priv->prev_z < para->finger_high / 2))) {     /* thin finger, distinct touch -> not a palm */
+            /* ((safe_width < 6) && (priv->prev_z < para->finger_high)) || /1* thin finger, distinct touch -> not a palm *1/ */
+            /* ((safe_width < 7) && (priv->prev_z < para->finger_high / 2))) {     /1* thin finger, distinct touch -> not a palm *1/ */
+             (priv->prev_z < para->finger_high) || /* thin finger, distinct touch -> not a palm */
+             (priv->prev_z < para->finger_high / 2)) {     /* thin finger, distinct touch -> not a palm */
             /* leave finger value as is */
         }
         else if (hw->z > priv->prev_z + 1)      /* z not stable, may be a palm */
             finger = FS_UNTOUCHED;
         else if (hw->z < priv->prev_z - 5)      /* z not stable, may be a palm */
             finger = FS_UNTOUCHED;
-        else if (hw->fingerWidth > para->palm_min_width)        /* finger width too large -> probably palm */
-            finger = FS_UNTOUCHED;
+        /* else if (hw->fingerWidth > para->palm_min_width)        /1* finger width too large -> probably palm *1/ */
+        /*     finger = FS_UNTOUCHED; */
     }
     priv->prev_z = hw->z;
 
