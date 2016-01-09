@@ -6,8 +6,15 @@ This is a fork from git://anongit.freedesktop.org/xorg/driver/xf86-input-synapti
 ABOUT
 -----
 
-In this fork I've put back SynapticsSHM into the driver to be able to use synclient monitor mode, so that the user can use xSwipe again for example.
-This also add support to 4 and 5 finger click on some more trackpads, It worked on my XPS14.
+This is a bit of an "eclectic" Synaptic driver. Includes SynapticsSHM 
+driver--which is actually removed in the newer versions of synaptics, but is 
+required for multitouch programs like xSwipe.
+
+Than PalmRejection using PalmMinZ is included from somewhere.
+
+And finally included is three finger dragging from: quadpixels/three-finger-dragging
+I am not sure if there is a setting to turn this on/off. So you might want to 
+checkout an earlier commit if don't like to use it.
 
 HOW TO COMPILE AND INSTALL
 --------------------------
