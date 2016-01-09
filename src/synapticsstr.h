@@ -133,12 +133,12 @@ enum TapState {
     TS_4,                       /* After release when "locked drags" enabled */
     TS_5,                       /* After touch when "locked drags" enabled */
     TS_CLICKPAD_MOVE,           /* After left button press on a clickpad */
+    TS_3FINGER_START,           /* After the first touch which is also a 3-finger touch */
 };
 
 enum TapButtonState {
     TBS_BUTTON_UP,              /* "Virtual tap button" is up */
     TBS_BUTTON_DOWN,            /* "Virtual tap button" is down */
-    TBS_BUTTON_DOWN_UP          /* Send button down event + set up state */
 };
 
 enum TouchpadModel {

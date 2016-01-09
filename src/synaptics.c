@@ -2073,15 +2073,18 @@ GetTimeOut(SynapticsPrivate * priv)
         return para->tap_time_2;
     case TS_4:
         return para->locked_drag_time;
+    case TS_3FINGER_START:
+        return 30;
     default:
         return -1;              /* No timeout */
     }
 }
 
 static int
-HandleTapProcessing(SynapticsPrivate * priv, struct SynapticsHwState *hw,
+HandleTapProcessing(InputInfoPtr pInfo, SynapticsPrivate * priv, struct SynapticsHwState *hw,
                     CARD32 now, enum FingerState finger,
                     Bool inside_active_area)
+
 {
     SynapticsParameters *para = &priv->synpara;
     Bool touch, release, is_timeout, move, press;
@@ -2095,157 +2098,205 @@ HandleTapProcessing(SynapticsPrivate * priv, struct SynapticsHwState *hw,
 
     touch = finger >= FS_TOUCHED && priv->finger_state == FS_UNTOUCHED;
     release = finger == FS_UNTOUCHED && priv->finger_state >= FS_TOUCHED;
+    int is_scroll = (priv->horiz_scroll_twofinger_on || priv->vert_scroll_twofinger_on) && 
+      (priv->tap_max_fingers == 2);
     move = (finger >= FS_TOUCHED &&
-            (priv->tap_max_fingers <=
-             ((priv->horiz_scroll_twofinger_on ||
-               priv->vert_scroll_twofinger_on) ? 2 : 1)) &&
-            (priv->prevFingers == hw->numFingers &&
-             ((abs(hw->x - priv->touch_on.x) >= para->tap_move) ||
-              (abs(hw->y - priv->touch_on.y) >= para->tap_move))));
+/*      (priv->tap_max_fingers <=
+         ((priv->horiz_scroll_twofinger_on ||
+           priv->vert_scroll_twofinger_on) ? 2 : 1)) && */
+        (!is_scroll) &&
+        (priv->prevFingers == hw->numFingers &&
+         ((abs(hw->x - priv->touch_on.x) >= para->tap_move) ||
+          (abs(hw->y - priv->touch_on.y) >= para->tap_move))));
     press = (hw->left || hw->right || hw->middle);
 
     if (touch) {
-        priv->touch_on.x = hw->x;
-        priv->touch_on.y = hw->y;
-        priv->touch_on.millis = now;
+      priv->touch_on.x = hw->x;
+      priv->touch_on.y = hw->y;
+      priv->touch_on.millis = now;
     }
     else if (release) {
-        priv->touch_on.millis = now;
+      priv->touch_on.millis = now;
     }
     if (hw->z > para->finger_high)
-        if (priv->tap_max_fingers < hw->numFingers)
-            priv->tap_max_fingers = hw->numFingers;
+      if (priv->tap_max_fingers < hw->numFingers)
+        priv->tap_max_fingers = hw->numFingers;
     timeout = GetTimeOut(priv);
     timeleft = TIME_DIFF(priv->touch_on.millis + timeout, now);
     is_timeout = timeleft <= 0;
 
- restart:
+restart:
     switch (priv->tap_state) {
-    case TS_START:
-        if (touch)
-            SetTapState(priv, TS_1, now);
-        break;
-    case TS_1:
-        if (para->clickpad && press) {
-            SetTapState(priv, TS_CLICKPAD_MOVE, now);
-            goto restart;
+      case TS_START:
+        if (touch) {
+          if(hw->numFingers == 3) SetTapState(priv, TS_3FINGER_START, now);
+          else SetTapState(priv, TS_1, now);
         }
-        if (move) {
+        break;
+      case TS_3FINGER_START:
+        if (touch || move) {
+          if (is_timeout/* || move*/) {
+            // The user has touched for more than the threshold,
+            //    begin dragging
+
+            // To achieve 3-finger dragging, we must make up for all the
+            //   side effects that would have been caused by the usual
+            //   single-finger dragging execution path.
+            //
+            // The usual "drag" path is:
+            // TS_START ---> TS_1 ----> TS_2A ----> TS_3 ----> TS_DRAG
+            // 
             SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
-            SetTapState(priv, TS_MOVE, now);
-            goto restart;
-        }
-        else if (is_timeout) {
-            if (finger == FS_TOUCHED) {
-                SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
-            }
-            SetTapState(priv, TS_MOVE, now);
-            goto restart;
-        }
-        else if (release) {
-            edge = edge_detection(priv, priv->touch_on.x, priv->touch_on.y);
-            SelectTapButton(priv, edge);
-            /* Disable taps outside of the active area */
-            if (!inside_active_area) {
-                priv->tap_button = 0;
-            }
-            SetTapState(priv, TS_2A, now);
-        }
-        break;
-    case TS_MOVE:
-        if (para->clickpad && press) {
-            SetTapState(priv, TS_CLICKPAD_MOVE, now);
-            goto restart;
+            SetTapState(priv, TS_DRAG, now);
+            priv->tap_button_state = TBS_BUTTON_DOWN;
+            priv->tap_button = 1;  // to post a "Left Button pressed" event
+            break;
+          }
         }
         if (release) {
-            SetMovingState(priv, MS_FALSE, now);
-            SetTapState(priv, TS_START, now);
+          edge = edge_detection(priv, priv->touch_on.x, priv->touch_on.y);
+          SelectTapButton(priv, edge);
+          /* Disable taps outside of the active area */
+          if (!inside_active_area) {
+            priv->tap_button = 0;
+          }
+          SetTapState(priv, TS_2A, now);
+          break;
         }
         break;
-    case TS_2A:
-        if (touch)
-            SetTapState(priv, TS_3, now);
-        else if (is_timeout)
-            SetTapState(priv, TS_SINGLETAP, now);
-        break;
-    case TS_2B:
-        if (touch)
-            SetTapState(priv, TS_3, now);
-        else if (is_timeout)
-            SetTapState(priv, TS_SINGLETAP, now);
-        break;
-    case TS_SINGLETAP:
-        if (touch)
-            SetTapState(priv, TS_1, now);
-        else if (is_timeout)
-            SetTapState(priv, TS_START, now);
-        break;
-    case TS_3:
+      case TS_1:
+        if (para->clickpad && press) {
+          SetTapState(priv, TS_CLICKPAD_MOVE, now);
+          goto restart;
+        }
         if (move) {
-            if (para->tap_and_drag_gesture) {
-                SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
-                SetTapState(priv, TS_DRAG, now);
-                xf86MsgVerb(X_INFO, 3, "to ts_drag 1\n");
-            }
-            else {
-                SetTapState(priv, TS_1, now);
-            }
-            goto restart;
+          SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
+          SetTapState(priv, TS_MOVE, now);
+          goto restart;
         }
         else if (is_timeout) {
-            if (para->tap_and_drag_gesture) {
-                if (finger == FS_TOUCHED) {
-                    SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
-                }
-                SetTapState(priv, TS_DRAG, now);
-                xf86MsgVerb(X_INFO, 3, "to ts_drag 2\n");
-            }
-            else {
-                SetTapState(priv, TS_1, now);
-            }
-            goto restart;
+          if (finger == FS_TOUCHED) {
+            SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
+          }
+          SetTapState(priv, TS_MOVE, now);
+          goto restart;
         }
         else if (release) {
-            SetTapState(priv, TS_2B, now);
+          edge = edge_detection(priv, priv->touch_on.x, priv->touch_on.y);
+          SelectTapButton(priv, edge);
+          /* Disable taps outside of the active area */
+          if (!inside_active_area) {
+            priv->tap_button = 0;
+          }
+          SetTapState(priv, TS_2A, now);
         }
         break;
-    case TS_DRAG:
+      case TS_MOVE:
         if (para->clickpad && press) {
-            SetTapState(priv, TS_CLICKPAD_MOVE, now);
-            goto restart;
+          SetTapState(priv, TS_CLICKPAD_MOVE, now);
+          goto restart;
+        }
+        else if (hw->numFingers == 3) {
+          SetTapState(priv, TS_3FINGER_START, now);
+          move = 1;
+          is_timeout = 1; // We don't have to differentiate between "3-finger tap"
+          //    and "3-finger drag" if we are transitioning into
+          //    3-finger drag from here.
+          // The timeout is only necessary if the user starts
+          //    a touch with 3 fingers.
+          goto restart;
+        }
+        if (release) {
+          SetMovingState(priv, MS_FALSE, now);
+          SetTapState(priv, TS_START, now);
+        }
+        break;
+      case TS_2A:
+        if (touch)
+          SetTapState(priv, TS_3, now);
+        else if (is_timeout)
+          SetTapState(priv, TS_SINGLETAP, now);
+        break;
+      case TS_2B:
+        if (touch)
+          SetTapState(priv, TS_3, now);
+        else if (is_timeout)
+          SetTapState(priv, TS_SINGLETAP, now);
+        break;
+      case TS_SINGLETAP:
+        if (touch)
+          SetTapState(priv, TS_1, now);
+        else if (is_timeout)
+          SetTapState(priv, TS_START, now);
+        break;
+      case TS_3:
+        if (move) {
+          if (para->tap_and_drag_gesture) {
+            SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
+            SetTapState(priv, TS_DRAG, now);
+          }
+          else {
+            SetTapState(priv, TS_1, now);
+          }
+          goto restart;
+        }
+        else if (is_timeout) {
+          if (para->tap_and_drag_gesture) {
+            if (finger == FS_TOUCHED) {
+              SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
+            }
+            SetTapState(priv, TS_DRAG, now);
+          }
+          else {
+            SetTapState(priv, TS_1, now);
+          }
+          goto restart;
+        }
+        else if (release) {
+          SetTapState(priv, TS_2B, now);
+        }
+        break;
+      case TS_DRAG:
+        if (para->clickpad && press) {
+          SetTapState(priv, TS_CLICKPAD_MOVE, now);
+          goto restart;
         }
         if (move)
-            SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
+          SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
         if (release) {
-            SetMovingState(priv, MS_FALSE, now);
-            if (para->locked_drags) {
-                SetTapState(priv, TS_4, now);
-            }
-            else {
-                SetTapState(priv, TS_START, now);
-            }
+          SetMovingState(priv, MS_FALSE, now);
+
+          if (hw->numFingers == 3)  // To release button 1
+            priv->tap_button = 1;
+
+          if (para->locked_drags) {
+            SetTapState(priv, TS_4, now);
+          }
+          else {
+            SetTapState(priv, TS_START, now);
+          }
         }
         break;
-    case TS_4:
+      case TS_4:
         if (is_timeout) {
-            SetTapState(priv, TS_START, now);
-            goto restart;
+          SetTapState(priv, TS_START, now);
+          goto restart;
         }
         if (touch)
-            SetTapState(priv, TS_5, now);
+          SetTapState(priv, TS_5, now);
         break;
-    case TS_5:
+      case TS_5:
         if (is_timeout || move) {
-            SetTapState(priv, TS_DRAG, now);
-            xf86MsgVerb(X_INFO, 3, "to ts_drag 3\n");
-            goto restart;
+          SetTapState(priv, TS_DRAG, now);
+          xf86MsgVerb(X_INFO, 3, "to ts_drag 3\n");
+          goto restart;
         }
         else if (release) {
-            SetMovingState(priv, MS_FALSE, now);
-            SetTapState(priv, TS_START, now);
+          SetMovingState(priv, MS_FALSE, now);
+          SetTapState(priv, TS_START, now);
         }
         break;
-    case TS_CLICKPAD_MOVE:
+      case TS_CLICKPAD_MOVE:
         /* Disable scrolling once a button is pressed on a clickpad */
         priv->vert_scroll_edge_on = FALSE;
         priv->horiz_scroll_edge_on = FALSE;
@@ -2254,20 +2305,20 @@ HandleTapProcessing(SynapticsPrivate * priv, struct SynapticsHwState *hw,
 
         /* Assume one touch is only for holding the clickpad button down */
         if (hw->numFingers > 1)
-            hw->numFingers--;
+          hw->numFingers--;
         SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
         if (!press) {
-            SetMovingState(priv, MS_FALSE, now);
-            SetTapState(priv, TS_MOVE, now);
-            priv->count_packet_finger = 0;
+          SetMovingState(priv, MS_FALSE, now);
+          SetTapState(priv, TS_MOVE, now);
+          priv->count_packet_finger = 0;
         }
         break;
     }
 
     timeout = GetTimeOut(priv);
     if (timeout >= 0) {
-        timeleft = TIME_DIFF(priv->touch_on.millis + timeout, now);
-        delay = clamp(timeleft, 1, delay);
+      timeleft = TIME_DIFF(priv->touch_on.millis + timeout, now);
+      delay = clamp(timeleft, 1, delay);
     }
     return delay;
 }
@@ -2275,17 +2326,17 @@ HandleTapProcessing(SynapticsPrivate * priv, struct SynapticsHwState *hw,
 #define HIST(a) (priv->move_hist[((priv->hist_index - (a) + SYNAPTICS_MOVE_HISTORY) % SYNAPTICS_MOVE_HISTORY)])
 #define HIST_DELTA(a, b, e) ((HIST((a)).e) - (HIST((b)).e))
 
-static void
+  static void
 store_history(SynapticsPrivate * priv, int x, int y, CARD32 millis)
 {
-    int idx = (priv->hist_index + 1) % SYNAPTICS_MOVE_HISTORY;
+  int idx = (priv->hist_index + 1) % SYNAPTICS_MOVE_HISTORY;
 
-    priv->move_hist[idx].x = x;
-    priv->move_hist[idx].y = y;
-    priv->move_hist[idx].millis = millis;
-    priv->hist_index = idx;
-    if (priv->count_packet_finger < SYNAPTICS_MOVE_HISTORY)
-        priv->count_packet_finger++;
+  priv->move_hist[idx].x = x;
+  priv->move_hist[idx].y = y;
+  priv->move_hist[idx].millis = millis;
+  priv->hist_index = idx;
+  if (priv->count_packet_finger < SYNAPTICS_MOVE_HISTORY)
+    priv->count_packet_finger++;
 }
 
 /*
@@ -2293,10 +2344,10 @@ store_history(SynapticsPrivate * priv, int x, int y, CARD32 millis)
  * linear regression to fit a line to the data and use the slope of the
  * line.
  */
-static double
+  static double
 estimate_delta(double x0, double x1, double x2, double x3)
 {
-    return x0 * 0.3 + x1 * 0.1 - x2 * 0.1 - x3 * 0.3;
+  return x0 * 0.3 + x1 * 0.1 - x2 * 0.1 - x3 * 0.3;
 }
 
 /**
@@ -2307,189 +2358,179 @@ estimate_delta(double x0, double x1, double x2, double x3)
  * @param margin the margin to center in which no change is applied
  * @return the new center (which might coincide with the previous)
  */
-static int
+  static int
 hysteresis(int in, int center, int margin)
 {
-    int diff = in - center;
+  int diff = in - center;
 
-    if (abs(diff) <= margin) {
-        diff = 0;
-    }
-    else if (diff > margin) {
-        diff -= margin;
-    }
-    else if (diff < -margin) {
-        diff += margin;
-    }
-    return center + diff;
+  if (abs(diff) <= margin) {
+    diff = 0;
+  }
+  else if (diff > margin) {
+    diff -= margin;
+  }
+  else if (diff < -margin) {
+    diff += margin;
+  }
+  return center + diff;
 }
 
-static void
+  static void
 get_edge_speed(SynapticsPrivate * priv, const struct SynapticsHwState *hw,
-               enum EdgeType  edge, int *x_edge_speed, int *y_edge_speed)
+    enum EdgeType  edge, int *x_edge_speed, int *y_edge_speed)
 {
-    SynapticsParameters *para = &priv->synpara;
+  SynapticsParameters *para = &priv->synpara;
 
-    int minZ = para->edge_motion_min_z;
-    int maxZ = para->edge_motion_max_z;
-    int minSpd = para->edge_motion_min_speed;
-    int maxSpd = para->edge_motion_max_speed;
-    int edge_speed;
+  int minZ = para->edge_motion_min_z;
+  int maxZ = para->edge_motion_max_z;
+  int minSpd = para->edge_motion_min_speed;
+  int maxSpd = para->edge_motion_max_speed;
+  int edge_speed;
 
-    if (hw->z <= minZ) {
-        edge_speed = minSpd;
+  if (hw->z <= minZ) {
+    edge_speed = minSpd;
+  }
+  else if (hw->z >= maxZ) {
+    edge_speed = maxSpd;
+  }
+  else {
+    edge_speed =
+      minSpd + (hw->z - minZ) * (maxSpd - minSpd) / (maxZ - minZ);
+  }
+  if (!priv->synpara.circular_pad) {
+    /* on rectangular pad */
+    if (edge & RIGHT_EDGE) {
+      *x_edge_speed = edge_speed;
     }
-    else if (hw->z >= maxZ) {
-        edge_speed = maxSpd;
+    else if (edge & LEFT_EDGE) {
+      *x_edge_speed = -edge_speed;
     }
-    else {
-        edge_speed =
-            minSpd + (hw->z - minZ) * (maxSpd - minSpd) / (maxZ - minZ);
+    if (edge & TOP_EDGE) {
+      *y_edge_speed = -edge_speed;
     }
-    if (!priv->synpara.circular_pad) {
-        /* on rectangular pad */
-        if (edge & RIGHT_EDGE) {
-            *x_edge_speed = edge_speed;
-        }
-        else if (edge & LEFT_EDGE) {
-            *x_edge_speed = -edge_speed;
-        }
-        if (edge & TOP_EDGE) {
-            *y_edge_speed = -edge_speed;
-        }
-        else if (edge & BOTTOM_EDGE) {
-            *y_edge_speed = edge_speed;
-        }
+    else if (edge & BOTTOM_EDGE) {
+      *y_edge_speed = edge_speed;
     }
-    else if (edge) {
-        /* at edge of circular pad */
-        double relX, relY;
+  }
+  else if (edge) {
+    /* at edge of circular pad */
+    double relX, relY;
 
-        relative_coords(priv, hw->x, hw->y, &relX, &relY);
-        *x_edge_speed = (int) (edge_speed * relX);
-        *y_edge_speed = (int) (edge_speed * relY);
-    }
+    relative_coords(priv, hw->x, hw->y, &relX, &relY);
+    *x_edge_speed = (int) (edge_speed * relX);
+    *y_edge_speed = (int) (edge_speed * relY);
+  }
 }
 
-static void
+  static void
 get_delta(SynapticsPrivate *priv, const struct SynapticsHwState *hw,
-          enum EdgeType edge, double *dx, double *dy)
+    enum EdgeType edge, double *dx, double *dy)
 {
-    SynapticsParameters *para = &priv->synpara;
-    double dtime = (hw->millis - HIST(0).millis) / 1000.0;
-    double integral;
-    double tmpf;
-    int x_edge_speed = 0;
-    int y_edge_speed = 0;
+  SynapticsParameters *para = &priv->synpara;
+  double dtime = (hw->millis - HIST(0).millis) / 1000.0;
+  double integral;
+  double tmpf;
+  int x_edge_speed = 0;
+  int y_edge_speed = 0;
 
-    *dx = hw->x - HIST(0).x;
-    *dy = hw->y - HIST(0).y;
+  *dx = hw->x - HIST(0).x;
+  *dy = hw->y - HIST(0).y;
 
-    if ((priv->tap_state == TS_DRAG) || para->edge_motion_use_always)
-        get_edge_speed(priv, hw, edge, &x_edge_speed, &y_edge_speed);
+  if ((priv->tap_state == TS_DRAG) || para->edge_motion_use_always)
+    get_edge_speed(priv, hw, edge, &x_edge_speed, &y_edge_speed);
 
-    /* report edge speed as synthetic motion. Of course, it would be
-     * cooler to report floats than to buffer, but anyway. */
+  /* report edge speed as synthetic motion. Of course, it would be
+   * cooler to report floats than to buffer, but anyway. */
 
-    /* FIXME: When these values go NaN, bad things happen. Root cause is unknown
-     * thus far though. */
-    if (isnan(priv->frac_x))
-        priv->frac_x = 0;
-    if (isnan(priv->frac_y))
-        priv->frac_y = 0;
+  /* FIXME: When these values go NaN, bad things happen. Root cause is unknown
+   * thus far though. */
+  if (isnan(priv->frac_x))
+    priv->frac_x = 0;
+  if (isnan(priv->frac_y))
+    priv->frac_y = 0;
 
-    tmpf = *dx + x_edge_speed * dtime + priv->frac_x;
-    priv->frac_x = modf(tmpf, &integral);
-    *dx = integral;
-    tmpf = *dy + y_edge_speed * dtime + priv->frac_y;
-    priv->frac_y = modf(tmpf, &integral);
-    *dy = integral;
+  tmpf = *dx + x_edge_speed * dtime + priv->frac_x;
+  priv->frac_x = modf(tmpf, &integral);
+  *dx = integral;
+  tmpf = *dy + y_edge_speed * dtime + priv->frac_y;
+  priv->frac_y = modf(tmpf, &integral);
+  *dy = integral;
 }
 
 /* Vector length, but not sqrt'ed, we only need it for comparison */
-static inline double
+  static inline double
 vlenpow2(double x, double y)
 {
-    return x * x + y * y;
+  return x * x + y * y;
 }
 
 /**
  * Compute relative motion ('deltas') including edge motion.
  */
-static int
-ComputeDeltas(InputInfoPtr pInfo, SynapticsPrivate * priv, struct SynapticsHwState *hw,
-              enum EdgeType edge, int *dxP, int *dyP, Bool inside_area)
+  static int
+ComputeDeltas(InputInfoPtr pInfo, SynapticsPrivate * priv, const struct SynapticsHwState *hw,
+    enum EdgeType edge, int *dxP, int *dyP, Bool inside_area)
 {
-    enum MovingState moving_state;
-    double dx, dy;
-    double vlen;
-    int delay = 1000000000;
+  enum MovingState moving_state;
+  double dx, dy;
+  double vlen;
+  int delay = 1000000000;
 
-    dx = dy = 0;
+  dx = dy = 0;
 
-    moving_state = priv->moving_state;
-    if (moving_state == MS_FALSE) {
-        switch (priv->tap_state) {
-        case TS_MOVE:
-        case TS_DRAG:
-            moving_state = MS_TOUCHPAD_RELATIVE;
-            break;
-        case TS_1:
-        case TS_3:
-        case TS_5:
-            moving_state = MS_TOUCHPAD_RELATIVE;
-            break;
-        default:
-            break;
-        }
+  moving_state = priv->moving_state;
+  if (moving_state == MS_FALSE) {
+    switch (priv->tap_state) {
+      case TS_MOVE:
+      case TS_DRAG:
+        moving_state = MS_TOUCHPAD_RELATIVE;
+        break;
+      case TS_1:
+      case TS_3:
+      case TS_5:
+        moving_state = MS_TOUCHPAD_RELATIVE;
+        break;
+      default:
+        break;
     }
+  }
 
-    if (!inside_area || !moving_state || priv->finger_state == FS_BLOCKED ||
-        priv->vert_scroll_edge_on || priv->horiz_scroll_edge_on ||
-        priv->vert_scroll_twofinger_on || priv->horiz_scroll_twofinger_on ||
-        priv->circ_scroll_on || priv->prevFingers != hw->numFingers //||
-        /*(moving_state == MS_TOUCHPAD_RELATIVE && hw->numFingers != 1)*/) {
-        /* reset packet counter. */
-        priv->count_packet_finger = 0;
-        goto out;
-    }
+  if (!inside_area || !moving_state || priv->finger_state == FS_BLOCKED ||
+      priv->vert_scroll_edge_on || priv->horiz_scroll_edge_on ||
+      priv->vert_scroll_twofinger_on || priv->horiz_scroll_twofinger_on ||
+      priv->circ_scroll_on || priv->prevFingers != hw->numFingers //||
+      /*(moving_state == MS_TOUCHPAD_RELATIVE && hw->numFingers != 1)*/) {
+    /* reset packet counter. */
+    priv->count_packet_finger = 0;
+    goto out;
+  }
 
-    /* To create the illusion of fluid motion, call back at roughly the report
-     * rate, even in the absence of new hardware events; see comment above
-     * POLL_MS declaration. */
-    delay = MIN(delay, POLL_MS);
+  /* To create the illusion of fluid motion, call back at roughly the report
+   * rate, even in the absence of new hardware events; see comment above
+   * POLL_MS declaration. */
+  delay = MIN(delay, POLL_MS);
 
-    if (priv->count_packet_finger <= 1)
-        goto out;               /* skip the lot */
+  if (priv->count_packet_finger <= 1)
+    goto out;               /* skip the lot */
 
-    if (moving_state == MS_TOUCHPAD_RELATIVE)
-        get_delta(priv, hw, edge, &dx, &dy);
+  if (moving_state == MS_TOUCHPAD_RELATIVE)
+    get_delta(priv, hw, edge, &dx, &dy);
 
- out:
-    if(hw->numFingers == 3) {
-      moving_state = MS_TOUCHPAD_RELATIVE;
-      priv->tap_state = TS_DRAG;
-      priv->tap_button = 1;
-      xf86PostButtonEvent(pInfo->dev, FALSE, 1, TRUE, 0, 0);
-      priv->lastButtons |= 0x00000001;
-      priv->tap_button_state = TBS_BUTTON_DOWN_UP;
-      hw->left = 1;
-    }
+out:
+  priv->prevFingers = hw->numFingers;
 
-    priv->prevFingers = hw->numFingers;
+  vlen = vlenpow2(dx/priv->synpara.resolution_horiz,
+      dy/priv->synpara.resolution_vert);
 
-    vlen = vlenpow2(dx/priv->synpara.resolution_horiz,
-        dy/priv->synpara.resolution_vert);
+  if (vlen > priv->synpara.maxDeltaMM * priv->synpara.maxDeltaMM) {
+    dx = 0;
+    dy = 0;
+  }
 
-    if (vlen > priv->synpara.maxDeltaMM * priv->synpara.maxDeltaMM) {
-      dx = 0;
-      dy = 0;
-    }
+  *dxP = dx;
+  *dyP = dy;
 
-    *dxP = dx;
-    *dyP = dy;
-
-    return delay;
+  return delay;
 }
 
   static double
@@ -3448,7 +3489,7 @@ HandleState(InputInfoPtr pInfo, struct SynapticsHwState *hw, CARD32 now,
 
   /* tap and drag detection. Needs to be performed even if the finger is in
    * the dead area to reset the state. */
-  timeleft = HandleTapProcessing(priv, hw, now, finger, inside_active_area);
+  timeleft = HandleTapProcessing(pInfo, priv, hw, now, finger, inside_active_area);
   if (timeleft > 0)
     delay = MIN(delay, timeleft);
 
