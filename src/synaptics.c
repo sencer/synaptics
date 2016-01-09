@@ -2025,6 +2025,7 @@ SetTapState(SynapticsPrivate * priv, enum TapState tap_state, CARD32 millis)
     case TS_START:
         priv->tap_button_state = TBS_BUTTON_UP;
         priv->tap_max_fingers = 0;
+        priv->has_seen_two_finger_scroll = FALSE;
         break;
     case TS_1:
         priv->tap_button_state = TBS_BUTTON_UP;
@@ -2198,7 +2199,6 @@ restart:
           /* Disable taps outside of the active area */
           if (!inside_active_area||(priv->has_seen_two_finger_scroll == TRUE)) {
             priv->tap_button = 0;
-            priv->has_seen_two_finger_scroll = FALSE;
           }
           SetTapState(priv, TS_2A, now);
         }
