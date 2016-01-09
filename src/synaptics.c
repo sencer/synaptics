@@ -2105,7 +2105,8 @@ HandleTapProcessing(InputInfoPtr pInfo, SynapticsPrivate * priv, struct Synaptic
       (priv->tap_max_fingers == 2);
     int exceed_bounds = ((abs(hw->x - priv->touch_on.x) >= para->tap_move) ||
         (abs(hw->y - priv->touch_on.y) >= para->tap_move));
-    move = (finger >= FS_TOUCHED && (!is_scroll) &&
+    move = (finger >= FS_TOUCHED &&
+        (!is_scroll || (is_scroll && priv->three_finger_drag_on==TRUE)) &&
         (priv->prevFingers == hw->numFingers) && exceed_bounds);
     press = (hw->left || hw->right || hw->middle);
 
@@ -2275,14 +2276,22 @@ restart:
         if (move) {
           if (priv->three_finger_drag_on == TRUE &&
               hw->numFingers < 3) { // 1 or 2 fingers left the trackpad
-            //   during a 3-finger drag: finish the 
-            //   drag
-            SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
-            SetTapState(priv, TS_MOVE, now);
-            priv->three_finger_drag_on = FALSE;
-            priv->tap_button = 1;
-            priv->tap_button_state = TBS_BUTTON_UP;
-            break;
+                                    // during a 3-finger drag: finish the drag
+            if (para->locked_drags) {
+              // If the user has 2 fingers on the trackpad because he released one
+              // finger during a 3-finger dragging, we should disable 2-finger
+              // scrolling until the next time 2-fingers touch the trackpad again
+              SetTapState(priv, TS_4, now);
+              priv->touch_on.millis = now; // And we must set this timestamp
+              break;
+            } else {
+              SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
+              SetTapState(priv, TS_MOVE, now);
+              priv->three_finger_drag_on = FALSE;
+              priv->tap_button = 1;
+              priv->tap_button_state = TBS_BUTTON_UP;
+              break;
+            }
           } else
             SetMovingState(priv, MS_TOUCHPAD_RELATIVE, now);
         }
@@ -2303,6 +2312,9 @@ restart:
       case TS_4:
         if (is_timeout) {
           SetTapState(priv, TS_START, now);
+          if (priv->three_finger_drag_on == TRUE) {
+            priv->three_finger_drag_on = FALSE; 
+          }
           goto restart;
         }
         if (touch)
@@ -2316,6 +2328,9 @@ restart:
         else if (release) {
           SetMovingState(priv, MS_FALSE, now);
           SetTapState(priv, TS_START, now);
+          if (priv->three_finger_drag_on == TRUE) {
+            priv->three_finger_drag_on = FALSE; 
+          }
         }
         break;
       case TS_CLICKPAD_MOVE:
@@ -2664,7 +2679,8 @@ HandleScrolling(SynapticsPrivate * priv, struct SynapticsHwState *hw,
 
   if (priv->synpara.touchpad_off == TOUCHPAD_TAP_OFF ||
       priv->synpara.touchpad_off == TOUCHPAD_OFF ||
-      priv->finger_state == FS_BLOCKED) {
+      priv->finger_state == FS_BLOCKED ||
+      priv->three_finger_drag_on == TRUE ) {
     stop_coasting(priv);
     priv->circ_scroll_on = FALSE;
     priv->vert_scroll_edge_on = FALSE;
